@@ -23,19 +23,8 @@ contract SNFTX is Ownable {
 
     // modifier가 아니라 그냥 함수로 구현함
     function onlyPrivileged(uint256 vaultId) internal view {
-        require(msg.sender == store.manager(vaultId), "Not manager");
-    }
-
-    function isEligible(uint256 vaultId, uint256 nftId)
-        public
-        view
-        returns (bool)
-    {
-        return store.isEligible(vaultId, nftId);
-    }
-
-    function vaultSize(uint256 vaultId) public view returns (uint256) {
-        return store.holdingsLength(vaultId);
+        require(msg.sender == store.manager(vaultId),
+            "Not manager");
     }
 
     function _getPseudoRand(uint256 modulus)
@@ -45,58 +34,11 @@ contract SNFTX is Ownable {
         store.setRandNonce(store.randNonce().add(1));
         return
             uint256(
-                keccak256(abi.encodePacked(now, msg.sender, store.randNonce()))
+                keccak256(
+                    abi.encodePacked(
+                        now, msg.sender, store.randNonce()))
             ) %
             modulus;
-    }
-
-    function _calcFee(
-        uint256 amount,
-        uint256 ethBase,
-        uint256 ethStep
-    ) internal pure returns (uint256) {
-        if (amount == 0) {
-            return 0;
-        } else {
-            uint256 n = amount;
-            uint256 nSub1 = amount >= 1 ? n.sub(1) : 0;
-            return ethBase.add(ethStep.mul(nSub1));
-        }
-    }
-
-    function createVault(
-        address _xTokenAddress,
-        address _assetAddress
-    ) public returns (uint256) {
-        IXToken xToken = IXToken(_xTokenAddress);
-        require(xToken.owner() == address(this), "Wrong owner");
-        uint256 vaultId = store.addNewVault();
-
-        store.setXTokenAddress(vaultId, _xTokenAddress);
-        store.setXToken(vaultId);
-        store.setNftAddress(vaultId, _assetAddress);
-        store.setNft(vaultId);
-        store.setManager(vaultId, msg.sender);
-
-        return vaultId;
-    }
-
-    function depositETH(uint256 vaultId) public payable {
-        store.setEthBalance(vaultId, store.ethBalance(vaultId).add(msg.value));
-    }
-
-    function _payEthFromVault(
-        uint256 vaultId,
-        uint256 amount,
-        // payable한 주소로 선언해줘야 transfer 함수를 바로 쓸 수 있다.
-        address payable to
-    ) internal {
-        uint256 ethBalance = store.ethBalance(vaultId);
-        uint256 amountToSend = ethBalance < amount ? ethBalance : amount;
-        if (amountToSend > 0) {
-            store.setEthBalance(vaultId, ethBalance.sub(amountToSend));
-            to.transfer(amountToSend);
-        }
     }
 
     function _receiveEthToVault(
@@ -115,74 +57,80 @@ contract SNFTX is Ownable {
         }
     }
 
-    function requestMint(uint256 vaultId, uint256[] memory nftIds)
-        public
-        payable
-    {
-        for (uint256 i = 0; i < nftIds.length; i = i.add(1)) {
-            require(
-                store.nft(vaultId).ownerOf(nftIds[i]) != address(this),
-                "Already owner"
-            );
-            // store.nft(vaultId)는 ERC721 contract 객체다.
-            store.nft(vaultId).safeTransferFrom(
-                msg.sender,
-                address(this),
-                nftIds[i]
-            );
-            require(
-                store.nft(vaultId).ownerOf(nftIds[i]) == address(this),
-                "Not received"
-            );
-            store.setRequester(vaultId, nftIds[i], msg.sender);
+    function _calcFee(
+        uint256 amount,
+        uint256 fee
+    ) internal pure returns (uint256) {
+        if (amount == 0) {
+            return 0;
+        } else {
+            return amount.mul(fee);
         }
     }
 
-    // 위에 거 반대로 해서 취소하는 기능
-    function revokeMintRequests(uint256 vaultId, uint256[] memory nftIds)
-        public
-    {
-        for (uint256 i = 0; i < nftIds.length; i = i.add(1)) {
-            require(
-                store.requester(vaultId, nftIds[i]) == msg.sender,
-                "Not requester"
-            );
-            store.setRequester(vaultId, nftIds[i], address(0));
-            store.nft(vaultId).safeTransferFrom(
-                address(this),
-                msg.sender,
-                nftIds[i]
-            );
-        }
-    }
-
-    function approveMintRequest(uint256 vaultId, uint256[] memory nftIds) public {
-        // modifier 대신 이렇게 함수 호출로 쓸 수도 있음.
+    function setIsEligible(
+        uint256 vaultId,
+        uint256[] memory nftIds,
+        bool _boolean
+    ) public {
         onlyPrivileged(vaultId);
         for (uint256 i = 0; i < nftIds.length; i = i.add(1)) {
-            address requester = store.requester(vaultId, nftIds[i]);
-            require(requester != address(0), "No request");
-            require(
-                store.nft(vaultId).ownerOf(nftIds[i]) == address(this),
-                "Not owner"
-            );
-            // address 0는 누구도 소유하고 있지 않다.
-            // request가 곧 끝날 것이므로 이렇게 requester를 없애주는 것.
-            store.setRequester(vaultId, nftIds[i], address(0));
-            store.setIsEligible(vaultId, nftIds[i], true);
-            store.holdingsAdd(vaultId, nftIds[i]);
-            // wei 단위 때문에 이렇게 10**18을 곱해줘야 한다.
-            // 일단 이렇게 찍어만 준다.
-            store.xToken(vaultId).mint(requester, 10**18);
+            store.setIsEligible(vaultId, nftIds[i], _boolean);
         }
     }
 
-    function _mint(uint256 vaultId, uint256[] memory nftIds) internal {
+    function isEligible(uint256 vaultId, uint256 nftId)
+        public
+        view
+        returns (bool)
+    {
+        return store.isEligible(vaultId, nftId);
+    }
+
+    function setEnableAllNfts(uint256 vaultId, bool _bool)
+        public
+    {
+        onlyPrivileged(vaultId);
+        store.setEnableAllNfts(vaultId, _bool);
+    }
+
+    function createVault(
+        address _xTokenAddress,
+        address _assetAddress,
+        bool enableAllNfts,
+        uint256[] memory eligibleNftIds,
+    ) public returns (uint256) {
+        IXToken xToken = IXToken(_xTokenAddress);
+        require(xToken.owner() == address(this), "Wrong owner");
+        uint256 vaultId = store.addNewVault();
+
+        store.setXTokenAddress(vaultId, _xTokenAddress);
+        store.setXToken(vaultId);
+        store.setNftAddress(vaultId, _assetAddress);
+        store.setNft(vaultId);
+        store.setManager(vaultId, msg.sender);
+
+        if (enableAllNfts) {
+            setEnableAllNfts(vaultId, true);
+        } else {
+            setEnableAllNfts(vaultId, false);
+            setIsEligible(vaultId, eligibleNftIds, true);
+        }
+
+        return vaultId;
+    }
+
+    function _mint(uint256 vaultId, uint256[] memory nftIds)
+        internal
+    {
         for (uint256 i = 0; i < nftIds.length; i = i.add(1)) {
             uint256 nftId = nftIds[i];
-            require(isEligible(vaultId, nftId), "Not eligible");
+            if (!store.enableAllNfts(vaultId){
+                (isEligible(vaultId, nftId), "Not eligible");
+            })
             require(
-                store.nft(vaultId).ownerOf(nftId) != address(this),
+                store.nft(vaultId).ownerOf(nftId)
+                    != address(this),
                 "Already owner"
             );
             // 1)NFT를 vault에 옮기고
@@ -192,37 +140,36 @@ contract SNFTX is Ownable {
                 nftId
             );
             require(
-                store.nft(vaultId).ownerOf(nftId) == address(this),
+                store.nft(vaultId).ownerOf(nftId)
+                    == address(this),
                 "Not received"
             );
             store.holdingsAdd(vaultId, nftId);
         }
-        // nftIds는 mint하는 NFT의 id들이다.
         uint256 amount = nftIds.length.mul(10**18);
         // 2)vault token 찍어준다.
         store.xToken(vaultId).mint(msg.sender, amount);
     }
 
-    function mint(uint256 vaultId, uint256[] memory nftIds) public payable {
+    function mint(uint256 vaultId, uint256[] memory nftIds)
+        public payable
+    {
         uint256 amount = nftIds.length;
-        (uint256 ethBase, uint256 ethStep) = store.mintFees(vaultId);
-        uint256 ethFee = _calcFee(
-            amount,
-            ethBase,
-            ethStep
-        );
+        uint256 fee = store.mintFee(vaultId);
+        uint256 ethFee = _calcFee(amount,fee);
         _receiveEthToVault(vaultId, ethFee, msg.value);
         _mint(vaultId, nftIds, false);
     }
 
     function _redeem(uint256 vaultId, uint256 numNFTs) internal {
+        // 새 array를 만들어줌
+        uint256[] memory nftIds = new uint256[](numNFTs);
         for (uint256 i = 0; i < numNFTs; i = i.add(1)) {
-            // 새 array를 만들어줌
-            uint256[] memory nftIds = new uint256[](1);
-            uint256 rand = _getPseudoRand(store.holdingsLength(vaultId));
-            nftIds[0] = store.holdingsAt(vaultId, rand);
-            _redeemHelper(vaultId, nftIds);
+            uint256 rand = _getPseudoRand(
+                store.holdingsLength(vaultId));
+            nftIds[i] = store.holdingsAt(vaultId, rand);
         }
+        _redeemHelper(vaultId, nftIds);
     }
 
     function _redeemHelper(
@@ -241,8 +188,6 @@ contract SNFTX is Ownable {
                 "NFT not in vault"
             );
             store.holdingsRemove(vaultId, nftId);
-            bool isElig = store.isEligible(vaultId, nftId);
-            store.setIsEligible(vaultId, nftId, !isElig);
             store.nft(vaultId).safeTransferFrom(
                 address(this),
                 msg.sender,
@@ -251,46 +196,40 @@ contract SNFTX is Ownable {
         }
     }
 
-    function redeem(uint256 vaultId, uint256 amount) public payable {
-        (uint256 ethBase, uint256 ethStep) = store.burnFees(vaultId);
-        uint256 ethFee = _calcFee(
-            amount,
-            ethBase,
-            ethStep
-        );
+    function redeem(uint256 vaultId, uint256 amount)
+        public payable
+    {
+        uint256 fee = store.burnFee(vaultId);
+        uint256 ethFee = _calcFee(amount,fee);
         _receiveEthToVault(vaultId, ethFee, msg.value);
         _redeem(vaultId, amount, false);
     }
 
-    function setIsEligible(
-        uint256 vaultId,
-        uint256[] memory nftIds,
-        bool _boolean
-    ) public {
-        onlyPrivileged(vaultId);
-        for (uint256 i = 0; i < nftIds.length; i = i.add(1)) {
-            store.setIsEligible(vaultId, nftIds[i], _boolean);
-        }
-    }
-
-    function setManager(uint256 vaultId, address newManager) public virtual {
+    function setManager(uint256 vaultId, address newManager)
+        public virtual {
         onlyPrivileged(vaultId);
         store.setManager(vaultId, newManager);
     }
 
-    function setMintFees(uint256 vaultId, uint256 _ethBase, uint256 _ethStep)
+    function setMintFee(
+        uint256 vaultId,
+        uint256 fee
+    )
         public
         virtual
     {
         onlyPrivileged(vaultId);
-        store.setMintFees(vaultId, _ethBase, _ethStep);
+        store.setMintFee(vaultId, fee);
     }
 
-    function setBurnFees(uint256 vaultId, uint256 _ethBase, uint256 _ethStep)
+    function setBurn(
+        uint256 vaultId,
+        uint256 fee
+    )
         public
         virtual
     {
         onlyPrivileged(vaultId);
-        store.setBurnFees(vaultId, _ethBase, _ethStep);
+        store.setBurnFee(vaultId, fee);
     }
 }
